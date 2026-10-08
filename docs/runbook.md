@@ -83,8 +83,22 @@ The bootstrap stack is **never destroyed** during normal work.
 
 ## 2. Work-session routine
 
-The environment costs about USD 0.21/hour, so it only runs during work sessions
-([README → Deployment](../README.md#deployment)).
+A **work session** is the time during which the live AWS environment is needed: to try the demo, to
+develop and debug the environment, or to capture evidence. It has no fixed length. It can last a few
+hours or several days. It starts with `apply` and ends with `destroy`, and nothing of the environment
+outlives it. The bootstrap stack (§1) isn't part of a session; it stays for the whole project.
+
+This is how the proof of concept is demonstrated at close to zero cost: create the environment, see it
+work, destroy it, then run the leftover check (§6) to make sure nothing billable remains. While it runs,
+the environment costs about USD 0.21/hour, about USD 5/day ([README → Deployment](../README.md#deployment)).
+Every destroy deletes all Dependency-Track data, so the next session starts with an empty instance.
+
+> **Not an option for a production system.** Destroying the environment between uses only works because
+> nothing in it has to be kept. A production Dependency-Track runs permanently: it re-analyses stored SBOMs
+> against newly published vulnerabilities only while it is up, and its projects, findings and audited
+> triage decisions are data that must be preserved, backed up and restorable, not discarded. A production
+> deployment keeps the environment running and protects its data
+> ([architecture §11](architecture.md#11-what-a-production-version-would-change)).
 
 ### Start a session
 

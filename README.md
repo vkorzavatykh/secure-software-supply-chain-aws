@@ -177,8 +177,15 @@ npm packages, Terraform providers and base images up to date
 
 ## Deployment
 
-The environment follows one rule: **run, test, capture evidence, destroy.** It exists only during work
-sessions, and nothing stays online just to serve as a demo.
+The environment follows one rule: **run, test, capture evidence, destroy.** It exists only during
+*work sessions*: the time during which the live environment is needed, to try the demo, debug or capture
+evidence. A session starts with `apply` and ends with `destroy`, it can last hours or days, and the
+[runbook](docs/runbook.md#2-work-session-routine) includes a leftover check so that nothing billable
+remains afterwards. Nothing stays online just to serve as a demo.
+
+> **This is how the proof of concept is demonstrated, not how a production system runs.** Every destroy
+> deletes all Dependency-Track data. A production Dependency-Track runs permanently, keeps re-analysing
+> stored SBOMs, and its findings and triage decisions are backed up, not discarded.
 
 1. **Once:** apply the bootstrap stack from a workstation and delegate the `dtrack` subdomain to its Route
    53 zone.
@@ -251,8 +258,10 @@ vulnerable dependency fails both gates and the upgrade makes them pass.
 
 - **Single instance, single AZ.** One EC2 instance, a single-AZ RDS instance and one NAT Gateway. There
   is no automatic recovery or scaling.
-- **Monitoring only while the environment runs.** Dependency-Track re-analyses stored SBOMs only while it
-  is up. Between sessions, the weekly Grype scan and Dependabot cover new vulnerabilities.
+- **Ephemeral by design, not a production operating model.** The environment exists only during work
+  sessions, and each destroy deletes Dependency-Track's projects, findings and triage decisions.
+  Dependency-Track re-analyses stored SBOMs only while it is up. Between sessions, the weekly Grype scan
+  and Dependabot cover new vulnerabilities. A production deployment runs permanently and protects its data.
 - **Public evidence.** SBOMs and scan reports are workflow artifacts of a public repository. That's fine
   for a demo app. For a real product they are sensitive, because they show an attacker what to target.
 - **Scoped, not minimal, CI permissions.** The apply role is narrowed from what Terraform actually calls,

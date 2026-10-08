@@ -253,6 +253,7 @@ Summarised in the README's [Limitations](../README.md#limitations) and
 
 | Area | POC | Production |
 |------|-----|------------|
+| Lifecycle | Created for a work session and destroyed afterwards; all Dependency-Track data is discarded each time ([runbook §2](runbook.md#2-work-session-routine)) | Runs permanently; data protected with backups, deletion protection and tested restores |
 | Availability | 1 EC2, single-AZ RDS, 1 NAT | Auto Scaling group / ECS service across AZs, Multi-AZ RDS, NAT per AZ |
 | Private AWS access | Through NAT | VPC interface endpoints (SSM, Secrets Manager, Logs), so less traffic leaves the VPC |
 | Edge | ALB open to the internet on 443 | WAF, IP allow-lists or private access via VPN / Zero Trust; SSO for the Dependency-Track UI |
