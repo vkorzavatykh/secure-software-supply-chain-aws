@@ -160,9 +160,9 @@ Critical image findings is the documented next step
 
 | Workflow | Trigger | Does |
 |----------|---------|------|
-| `ci.yml` | PR, push to `main` (application and security paths) | Test and build, then calls `security.yml` |
+| `ci.yml` | Every PR; push to `main` (application and security paths) | Test and build, then calls `security.yml` |
 | `security.yml` | Called by `ci.yml`; weekly schedule on `main` | SBOMs, Grype gate, Dependency-Track upload and policy gate |
-| `infrastructure.yml` | PR, push to `main` (infrastructure paths); manual `apply` / `destroy` | `fmt`, `validate`, offline `terraform test`, `tflint`, `plan`; two-phase apply after approval |
+| `infrastructure.yml` | Every PR; push to `main` (infrastructure paths); manual `apply` / `destroy` | `fmt`, `validate`, offline `terraform test`, `tflint`, `plan`; two-phase apply after approval |
 
 Tests run on every change without an AWS account: unit and HTTP tests for the API (Vitest, coverage
 thresholds), and `terraform test` suites that check the security properties above, from the CI roles' trust

@@ -4,13 +4,9 @@
 name: infrastructure
 
 on:
+  # Every pull request runs every check, so the checks can be required on main: a required check
+  # that is skipped by a path filter would block the pull request forever.
   pull_request:
-    paths:
-      - "infrastructure/**"
-      - "deployment/**"
-      - ".tflint.hcl"
-      - ".terraform-version"
-      - ".github/workflows/infrastructure.yml"
   push:
     branches: [main]
     paths:

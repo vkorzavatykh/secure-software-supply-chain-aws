@@ -93,9 +93,9 @@ already exists and must not be reset. Existing keys and policies are reused, not
 
 | File | Trigger | Jobs |
 |------|---------|------|
-| `.github/workflows/ci.yml` | PR, push to `main` (paths `app/**`, `security/**`) | `test-build` → calls `security.yml` |
+| `.github/workflows/ci.yml` | Every PR (so its checks can be required on `main`); push to `main` (paths `app/**`, `security/**`) | `test-build` → calls `security.yml` |
 | `.github/workflows/security.yml` | `workflow_call`; weekly `schedule` on `main` | `sbom-scan` → `dependency-track` (conditional) |
-| `.github/workflows/infrastructure.yml` | PR / push (paths `infrastructure/**`); `workflow_dispatch` (`action = apply \| destroy`) | `validate-plan` → `apply` or `destroy` (environment `poc`) |
+| `.github/workflows/infrastructure.yml` | Every PR; push to `main` (paths `infrastructure/**`, `deployment/**`); `workflow_dispatch` (`action = apply \| destroy`) | `validate-plan` → `apply` or `destroy` (environment `poc`) |
 | `.github/dependabot.yml` | — | npm (`app/`), GitHub Actions, Terraform providers |
 
 Every workflow sets `permissions: contents: read` at the top. Jobs that assume AWS roles add
