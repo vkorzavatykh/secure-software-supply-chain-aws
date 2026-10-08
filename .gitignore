@@ -1,0 +1,41 @@
+# Terraform: state, plans and variable files can contain sensitive values.
+# Only terraform.tfvars.example is committed; provider lock files are committed on purpose.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+*.tfvars
+*.tfvars.json
+backend.hcl
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+crash.log
+crash.*.log
+.terraformrc
+terraform.rc
+
+# Node.js
+node_modules/
+dist/
+coverage/
+npm-debug.log*
+
+# SBOMs and scan reports are CI artifacts, not source
+*.cdx.json
+grype-*.json
+grype-*.txt
+
+# Local environment files and key material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/
