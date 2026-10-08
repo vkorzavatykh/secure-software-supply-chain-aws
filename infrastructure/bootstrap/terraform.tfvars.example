@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (ignored by Git) only to change a default.
+
+# region             = "eu-central-1"
+# github_repository  = "vkorzavatykh/secure-software-supply-chain-aws"
+# github_environment = "poc"
+
+# true only for the final teardown, after the NS delegation has been removed (runbook §6)
+# state_bucket_force_destroy = false
