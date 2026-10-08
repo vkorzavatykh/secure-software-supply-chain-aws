@@ -1,7 +1,7 @@
 # One-time stack, applied from a workstation with admin SSO credentials (ADR-005, ADR-008).
 # It creates what CI can't create for itself: the state bucket, the GitHub OIDC identity provider and the
 # CI roles. The DNS zone and certificate live here too, because they must survive every environment
-# teardown (ADR-011).
+# teardown (ADR-011): see dns.tf.
 
 data "aws_caller_identity" "current" {}
 

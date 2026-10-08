@@ -14,7 +14,7 @@ infrastructure/
 
 | Stack | Lifecycle | Contains |
 |-------|-----------|----------|
-| `bootstrap` | Applied once with admin SSO credentials; destroyed at the end of the project | State bucket, GitHub OIDC provider, CI roles |
+| `bootstrap` | Applied once with admin SSO credentials; destroyed at the end of the project | State bucket, GitHub OIDC provider, CI roles, Route 53 zone with CAA record, ACM certificate |
 | `environments/poc` | Applied and destroyed per work session by the `infrastructure` workflow | The Dependency-Track environment |
 
 The split exists because CI can't create the identity it authenticates with (ADR-008), and because

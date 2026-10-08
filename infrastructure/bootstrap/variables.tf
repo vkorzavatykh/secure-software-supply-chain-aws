@@ -26,3 +26,9 @@ variable "state_bucket_force_destroy" {
   type        = bool
   default     = false
 }
+
+variable "dtrack_domain" {
+  description = "Hostname of the Dependency-Track UI. A Route 53 zone for it is delegated from the parent domain (ADR-011)."
+  type        = string
+  default     = "dtrack.frontward-solutions.com"
+}
