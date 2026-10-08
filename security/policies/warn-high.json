@@ -1,0 +1,8 @@
+{
+  "name": "warn-high",
+  "operator": "ANY",
+  "violationState": "WARN",
+  "conditions": [
+    { "subject": "SEVERITY", "operator": "IS", "value": "HIGH" }
+  ]
+}

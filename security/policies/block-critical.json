@@ -1,0 +1,8 @@
+{
+  "name": "block-critical",
+  "operator": "ANY",
+  "violationState": "FAIL",
+  "conditions": [
+    { "subject": "SEVERITY", "operator": "IS", "value": "CRITICAL" }
+  ]
+}
