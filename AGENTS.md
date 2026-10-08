@@ -47,6 +47,6 @@ done
 tflint --init --config "$PWD/.tflint.hcl" && tflint --recursive --config "$PWD/.tflint.hcl"
 
 # SBOM and gate, with the Syft and Grype versions pinned in .github/workflows/security.yml
-syft scan dir:app -o cyclonedx-json@1.6=sbom.cdx.json
+syft scan dir:app -o cyclonedx-json=sbom.cdx.json
 grype sbom:sbom.cdx.json --config .grype.yaml --fail-on critical
 ```

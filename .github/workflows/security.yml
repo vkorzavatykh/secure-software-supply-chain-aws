@@ -67,13 +67,13 @@ jobs:
             docker build --build-arg GIT_COMMIT="$GIT_COMMIT" --tag "$IMAGE" app
           fi
 
-      # CycloneDX 1.6 until the pinned Dependency-Track version is confirmed to accept 1.7.
+      # CycloneDX 1.7, Syft's default; Grype and Dependency-Track 5.1 both accept it (ADR-024).
       - name: Application SBOM
         env:
           SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
           "$SYFT" scan dir:app --source-name sssc-demo-api --source-version "$GITHUB_SHA" \
-            --output cyclonedx-json@1.6=sbom.cdx.json
+            --output cyclonedx-json=sbom.cdx.json
 
       - name: "Application scan: gate (fails on Critical)"
         env:
@@ -88,7 +88,7 @@ jobs:
           SYFT: ${{ steps.syft.outputs.cmd }}
         run: |
           "$SYFT" scan "docker:$IMAGE" --source-name sssc-demo-api-image --source-version "$GITHUB_SHA" \
-            --output cyclonedx-json@1.6=sbom-image.cdx.json
+            --output cyclonedx-json=sbom-image.cdx.json
 
       - name: "Image scan: report only"
         if: ${{ !cancelled() }}
