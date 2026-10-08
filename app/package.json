@@ -13,7 +13,9 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "express": "5.2.1",
@@ -26,9 +28,13 @@
     "@eslint/js": "10.0.1",
     "@types/express": "5.0.6",
     "@types/node": "24.19.1",
+    "@types/supertest": "7.2.1",
+    "@vitest/coverage-v8": "5.0.3",
     "eslint": "10.12.0",
+    "supertest": "7.3.1",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.71.1"
+    "typescript-eslint": "8.71.1",
+    "vitest": "5.0.3"
   }
 }
