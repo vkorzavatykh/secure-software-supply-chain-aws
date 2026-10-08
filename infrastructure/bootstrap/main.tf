@@ -14,7 +14,6 @@ locals {
   # Terraform state of the per-session environment and its S3-native lock file.
   poc_state_key = "poc/terraform.tfstate"
 
-  # Parameters the CI infrastructure roles must never read (security §3, ADR-019).
-  dtrack_ci_api_key_arn  = "arn:${local.partition}:ssm:${var.region}:${local.account_id}:parameter/sssc/dtrack/ci-api-key"
-  dtrack_nvd_api_key_arn = "arn:${local.partition}:ssm:${var.region}:${local.account_id}:parameter/sssc/dtrack/nvd-api-key"
+  # The parameter the CI infrastructure roles must never read (security §3, ADR-019).
+  dtrack_ci_api_key_arn = "arn:${local.partition}:ssm:${var.region}:${local.account_id}:parameter/sssc/dtrack/ci-api-key"
 }

@@ -30,7 +30,7 @@ data "aws_iam_policy_document" "deny_secret_values" {
       "ssm:GetParameters",
       "ssm:GetParameterHistory",
     ]
-    resources = [local.dtrack_ci_api_key_arn, local.dtrack_nvd_api_key_arn]
+    resources = [local.dtrack_ci_api_key_arn]
   }
 
   # A recursive read from "/" would otherwise return those parameters too. Terraform doesn't need it.

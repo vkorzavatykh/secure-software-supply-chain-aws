@@ -31,7 +31,7 @@ variable "dtrack_public" {
 variable "instance_type" {
   description = "Instance type of the Dependency-Track host (x86_64; the AMI parameter and Compose binary assume it)."
   type        = string
-  default     = "t3.large"
+  default     = "t3.medium"
 }
 
 variable "db_instance_class" {
