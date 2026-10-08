@@ -3,7 +3,7 @@
 # no package manager and no npm, so the image SBOM holds little beyond Node.js and the app (ADR-023).
 
 # Images stay on FROM lines (not in ARGs) so Dependabot can update their digests.
-FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS node
+FROM node:26.9.0-trixie-slim@sha256:3a771f83944bb763050c23c0225c260638c4b7899e7a72485ef75e5e570499e5 AS node
 
 # Production dependencies only, exactly as locked.
 FROM node AS dependencies
