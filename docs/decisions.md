@@ -31,10 +31,11 @@
 | 017 | GitHub Actions pinned by commit SHA; least-privilege workflow permissions | Accepted |
 | 018 | The demo API is built and scanned, not deployed | Accepted |
 | 019 | Trust boundaries and access model | Accepted, point 3 **amended by 022** |
-| 020 | Explicit startup barrier: no public forwarding until bootstrap succeeds | Accepted |
-| 021 | Dependency-Track secret key is essential state, kept in Secrets Manager | Accepted |
+| 020 | Explicit startup barrier: no public forwarding until bootstrap succeeds | Accepted, point 1 **amended by 024** |
+| 021 | Dependency-Track secret key is essential state, kept in Secrets Manager | Accepted, **amended by 024** |
 | 022 | Dedicated application database user; master credentials for bootstrap only | Accepted |
 | 023 | Phased SBOM coverage: application blocking, container image report-only | Accepted |
+| 024 | Dependency-Track v5: key encryption key from the bootstrap, no NVD API key, OSV enabled, `t3.medium` | Accepted |
 
 ---
 
@@ -283,6 +284,9 @@
 
 ### ADR-020 — Explicit startup barrier (supersedes ADR-012)
 
+> **Point 1 amended by ADR-024:** Dependency-Track v5 has no NVD API key setting. First-run enables the
+> OSV data source instead, and its check of the default login reads the response body, not only the status.
+
 - **Context.** Every session starts with a fresh database, so Dependency-Track's default admin credentials
   exist at every first start. ADR-012 relied on the health-check threshold to delay public exposure. That is
   wrong: an ALB starts routing to a newly registered target after its **first** passing health check,
@@ -309,6 +313,11 @@
   keeps the existing database, so no default credentials exist and the listener can stay public.
 
 ### ADR-021 — Dependency-Track secret key is essential state (amends ADR-003)
+
+> **Amended by ADR-024:** the decision holds (the key is essential state, kept in Secrets Manager, with the
+> lifetime of the database), but the mechanism below is v4's. In v5 the key is a key encryption key that the
+> bootstrap generates *before* the first start and passes as a file; `secret.key`, `ALPINE_SECRET_KEY_PATH`
+> and the capture step no longer apply, and nothing else in the data directory is essential.
 
 - **Context.** Dependency-Track encrypts confidential values (for example, access tokens for external
   services) with AES-256 before storing them in the database. It uses a secret key that it generates on
@@ -370,3 +379,44 @@
 - **Why.** Full visibility now, with the blocking scope growing deliberately and documented.
 - **Consequences.** One more SBOM and scan step (seconds). Image findings are visible in Dependency-Track and
   in every job summary. A minimal base image is used, which reduces noise honestly.
+
+### ADR-024 — Dependency-Track v5 (supersedes the v4 specifics of ADR-021 and the NVD API key)
+
+- **Context.** The design was written for Dependency-Track v4. At kickoff, v5 had been GA since June 2026, and
+  v4 gets fixes only until about six months after that. The local spike ([spike/README.md](../spike/README.md))
+  ran v5.1.2 against PostgreSQL in the same topology and checked every assumption of ADR-020 to ADR-022. The
+  architecture holds; seven details differ.
+- **Decision.**
+  1. **Version.** `dependencytrack/apiserver` and `dependencytrack/frontend` 5.1.2, pinned by digest, on
+     PostgreSQL 17 (v5 needs 14 or later). Configuration uses `DT_*` names; v4's `ALPINE_*` names make v5
+     refuse to start.
+  2. **Key encryption key (KEK).** v5 encrypts secrets with a KEK and refuses to serve when the KEK doesn't
+     match the database. The bootstrap generates the KEK (`openssl rand -base64 32`) once per environment,
+     **before** the first start, and stores it in `sssc/dtrack/secret-key`. On every boot it restores the KEK
+     to a file that only the container can read and passes it as
+     `DT_SECRET_MANAGEMENT_DATABASE_KEK=${file::/run/secrets/kek}`. The database password is passed the same
+     way, so neither value appears in the container environment, a command line or a log.
+  3. **Health checks use the API.** With a wrong KEK, the API port never opens, but the process stays up and
+     the management endpoint `:9000/health` reports UP. The load balancer and the bootstrap's readiness wait
+     therefore use `GET /api/version` on the API port, never `:9000/health`.
+  4. **No NVD API key.** v5 mirrors the public NVD JSON 2.0 feed files and has no NVD API key setting. The
+     parameter `/sssc/dtrack/nvd-api-key`, its permissions and its runbook step are removed.
+  5. **OSV is enabled by first-run.** A fresh instance enables only NVD, which matches npm packages poorly.
+     First-run enables OSV for npm and starts its first mirror.
+  6. **First-run and gate details.** The default-login check reads the body (`INVALID_CREDENTIALS`): both
+     before and after the password change the status is 401. The gate waits for the upload token's status
+     `COMPLETED`, which covers import, analysis and policy evaluation, and reads every page of violations and
+     findings (the API returns 100 items by default). CycloneDX 1.7 is accepted, so CI uses Syft's default.
+  7. **Instance size.** The apiserver needs about 490 MiB with the NVD and OSV data loaded (v4 needed about
+     4.5 GiB). The instance moves from `t3.large` (8 GiB) to `t3.medium` (4 GiB), which halves the EC2 cost.
+- **Why.** The current major line, which stays supported after the project is published; a simpler and
+  stronger bootstrap (no capture step after the first start, one secret fewer, no secret in the container
+  environment); a fail-closed reaction to a wrong key instead of silently unreadable settings; and lower cost.
+- **Alternatives.** Stay on v4.14 (matches the original design, but reaches end of life soon after the
+  project is published). Let v5 generate a KEK keyset file and capture it after the first start, as ADR-021
+  did for v4 (supports KEK rotation, but brings back the capture step and a window where the key exists only
+  on the instance).
+- **Consequences.** The instance holds no essential state at all: the data directory is disposable cache.
+  KEK rotation isn't supported with a key passed through configuration; that is listed as a production
+  improvement. Image findings differ between the tools: Grype reports the base image's unfixed Debian CVEs,
+  Dependency-Track doesn't, which supports ADR-006 and ADR-023.

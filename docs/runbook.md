@@ -32,8 +32,7 @@ Access to the parent domain's DNS provider. The `dtrack` NS records are added th
 
 ### External accounts
 
-An NVD API key (free, requested from NIST) makes Dependency-Track's first vulnerability mirror much faster.
-It is stored in SSM Parameter Store (§1), never in Git.
+None. Dependency-Track v5 mirrors the public NVD feed files and OSV, so no NVD API key is needed (ADR-024).
 
 ### Local tools
 
@@ -53,9 +52,6 @@ It is stored in SSM Parameter Store (§1), never in Git.
 ```bash
 aws sso login --profile sssc
 export AWS_PROFILE=sssc
-
-# NVD API key: once, by hand, outside Terraform
-aws ssm put-parameter --name /sssc/dtrack/nvd-api-key --type SecureString --value '<key>'
 
 cd infrastructure/bootstrap
 terraform init           # local state on purpose; keep a backup copy (infrastructure/README.md#state)
@@ -90,7 +86,7 @@ outlives it. The bootstrap stack (§1) isn't part of a session; it stays for the
 
 This is how the proof of concept is demonstrated at close to zero cost: create the environment, see it
 work, destroy it, then run the leftover check (§6) to make sure nothing billable remains. While it runs,
-the environment costs about USD 0.21/hour, about USD 5/day ([README → Deployment](../README.md#deployment)).
+the environment costs about USD 0.16/hour, about USD 4/day ([README → Deployment](../README.md#deployment)).
 Every destroy deletes all Dependency-Track data, so the next session starts with an empty instance.
 
 > **Not an option for a production system.** Destroying the environment between uses only works because
@@ -128,8 +124,9 @@ gh workflow run infrastructure.yml -f action=destroy -f confirm=destroy-poc
 
 ## 3. First-run configuration
 
-**Automated** by the instance bootstrap (ADR-020): admin password, `ci` team and API key, policies, NVD
-API key setting, then a check that the default login fails. Nothing to do by hand.
+**Automated** by the instance bootstrap with `deployment/scripts/dtrack-first-run.sh` (ADR-020): admin
+password, `ci` team and API key, policies, OSV data source, then a check that the default login fails.
+Nothing to do by hand. The same script runs against the local spike (`spike/run.sh first-run`).
 
 **Manual fallback** (only if automation is disabled or broken; record its use as a limitation):
 
@@ -244,6 +241,6 @@ this order**:
 | CI: polling the token times out | Initial mirroring still running; analysis slow | Wait for bootstrap-status `done`; raise the timeout |
 | `terraform` reports a state lock | A previous run was interrupted | Make sure no run is active, then `terraform force-unlock <lock-id>` |
 | Every request answers `503 Starting` | `dtrack_public` is still `false`: bootstrap not finished, or phase 2 not applied | bootstrap-status parameter; cloud-init and container logs |
-| After instance replacement: NVD mirroring fails, or settings show decryption errors | Secret key not restored, so Dependency-Track generated a new one (ADR-021) | Does `sssc/dtrack/secret-key` have a value? Is `ALPINE_SECRET_KEY_PATH` set in `.env`? |
+| The apiserver container is running and "healthy", but `/api/version` doesn't answer | Wrong key encryption key: the log shows `KEK keyset mismatch` and the API never starts. `:9000/health` still reports UP (ADR-024) | Does `/opt/dtrack/secrets/kek` match `sssc/dtrack/secret-key`? Never replace the key of an existing database |
 | `password authentication failed for user "dtrack"` | `.env` is out of date after a rotation | Re-render `.env` from `sssc/dtrack/db-app` and restart (rotation procedure, §5) |
 | ACM certificate stuck in "Pending validation" | Validation record missing or not propagated | DNS record for the validation CNAME; delegation of the zone |
