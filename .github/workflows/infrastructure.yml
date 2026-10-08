@@ -1,0 +1,280 @@
+# Infrastructure pipeline (security §5). Static checks and offline tests always run and need no AWS
+# account. Everything that touches AWS assumes a role through OIDC (ADR-005) and switches itself off
+# when its repository variable is missing, so CI stays green while the environment is torn down.
+name: infrastructure
+
+on:
+  pull_request:
+    paths:
+      - "infrastructure/**"
+      - "deployment/**"
+      - ".tflint.hcl"
+      - ".terraform-version"
+      - ".github/workflows/infrastructure.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infrastructure/**"
+      - "deployment/**"
+      - ".tflint.hcl"
+      - ".terraform-version"
+      - ".github/workflows/infrastructure.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Start a work session (apply) or end it (destroy)
+        type: choice
+        options: [apply, destroy]
+        required: true
+      confirm:
+        description: Type destroy-poc to confirm a destroy
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+# One run at a time against the environment, and a running apply is never cancelled.
+concurrency:
+  group: infrastructure-${{ github.event_name == 'pull_request' && github.ref || 'poc' }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TFLINT_VERSION: v0.64.0
+  POC_DIR: infrastructure/environments/poc
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-central-1' }}
+
+jobs:
+  validate:
+    name: Validate and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # Download each provider once for all directories; the lock files of the root stacks still pin
+      # the checksums (-lockfile=readonly).
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform-plugin-cache
+      TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the pinned Terraform version
+        id: versions
+        run: echo "terraform=$(cat .terraform-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.versions.outputs.terraform }}
+          terraform_wrapper: false
+
+      - name: Format
+        run: terraform fmt -check -recursive -diff infrastructure
+
+      - name: Validate the root stacks
+        run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          for stack in infrastructure/bootstrap "$POC_DIR"; do
+            terraform -chdir="$stack" init -backend=false -lockfile=readonly
+            terraform -chdir="$stack" validate
+          done
+
+      # Offline: mocked provider, or the real one with fake credentials and overridden resources.
+      - name: Test (no AWS account needed)
+        run: |
+          for dir in infrastructure/bootstrap infrastructure/modules/*/; do
+            terraform -chdir="$dir" init -backend=false
+            terraform -chdir="$dir" test
+          done
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - name: tflint
+        env:
+          # Avoids GitHub API rate limits when tflint downloads the pinned AWS ruleset.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+          tflint --recursive --config "$GITHUB_WORKSPACE/.tflint.hcl"
+
+  plan:
+    name: Plan
+    needs: validate
+    # Same-repository pull requests only: fork and Dependabot runs get no OIDC token for this role.
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+      && vars.TF_PLAN_ROLE_ARN != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the pinned Terraform version
+        id: versions
+        run: echo "terraform=$(cat .terraform-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.versions.outputs.terraform }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: terraform -chdir="$POC_DIR" init -lockfile=readonly -backend-config="bucket=$TF_STATE_BUCKET"
+
+      # Planned against the steady state of a session, with the startup barrier open.
+      - name: Plan
+        env:
+          TF_VAR_alarm_email: ${{ secrets.ALARM_EMAIL }}
+        run: terraform -chdir="$POC_DIR" plan -lock-timeout=5m -var dtrack_public=true -out=tfplan
+
+      # Resource addresses and actions only. Attribute values (ARNs with the account ID, for example)
+      # stay out of the public job summary.
+      - name: Plan summary
+        run: |
+          {
+            echo "### Terraform plan (poc)"
+            echo
+            terraform -chdir="$POC_DIR" show -json tfplan | jq -r '
+              [.resource_changes[] | select(.change.actions != ["no-op"] and .change.actions != ["read"])] as $changes
+              | if ($changes | length) == 0 then "No changes."
+                else "| Action | Resource |", "|---|---|",
+                     ($changes[] | "| \(.change.actions | join(" + ")) | `\(.address)` |")
+                end'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    name: Apply (two-phase)
+    needs: validate
+    if: >-
+      (github.event_name == 'push' && vars.TF_APPLY_ROLE_ARN != '')
+      || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+    runs-on: ubuntu-24.04
+    environment: poc # required reviewer: the manual approval before anything changes
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_VAR_alarm_email: ${{ secrets.ALARM_EMAIL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the pinned Terraform version
+        id: versions
+        run: echo "terraform=$(cat .terraform-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.versions.outputs.terraform }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.TF_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: terraform -chdir="$POC_DIR" init -lockfile=readonly -backend-config="bucket=$TF_STATE_BUCKET"
+
+      # An environment whose bootstrap already verified the credentials can stay public, even if this
+      # apply replaces the instance: the database never holds default credentials again (ADR-020).
+      # Anything else, including a missing parameter or a failed read, takes the two-phase path.
+      - name: Read the bootstrap status
+        id: bootstrap
+        run: |
+          status=$(aws ssm get-parameter --name /sssc/dtrack/bootstrap-status \
+            --query Parameter.Value --output text 2>/dev/null || echo absent)
+          echo "bootstrap-status: $status"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: "Phase 1: apply with the startup barrier closed"
+        if: steps.bootstrap.outputs.status != 'done'
+        run: terraform -chdir="$POC_DIR" apply -auto-approve -lock-timeout=5m -var dtrack_public=false
+
+      # If bootstrap never finishes, this times out, the job fails and nothing is ever exposed.
+      - name: Wait until bootstrap has verified that the default login fails
+        if: steps.bootstrap.outputs.status != 'done'
+        timeout-minutes: 45
+        run: |
+          until [ "$(aws ssm get-parameter --name /sssc/dtrack/bootstrap-status \
+                     --query Parameter.Value --output text)" = "done" ]; do
+            echo "bootstrap-status is not done yet"
+            sleep 30
+          done
+
+      - name: "Phase 2: open the startup barrier"
+        run: terraform -chdir="$POC_DIR" apply -auto-approve -lock-timeout=5m -var dtrack_public=true
+
+  destroy:
+    name: Destroy
+    needs: validate
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && inputs.action == 'destroy'
+      && inputs.confirm == 'destroy-poc'
+    runs-on: ubuntu-24.04
+    environment: poc
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_VAR_alarm_email: ${{ secrets.ALARM_EMAIL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the pinned Terraform version
+        id: versions
+        run: echo "terraform=$(cat .terraform-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ steps.versions.outputs.terraform }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.TF_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: terraform -chdir="$POC_DIR" init -lockfile=readonly -backend-config="bucket=$TF_STATE_BUCKET"
+
+      - name: Destroy the environment
+        run: terraform -chdir="$POC_DIR" destroy -auto-approve -lock-timeout=5m -var dtrack_public=false
+
+      # Written by the instance, deliberately outside Terraform state (architecture §6).
+      - name: Delete the CI API key parameter
+        run: |
+          if ! output=$(aws ssm delete-parameter --name /sssc/dtrack/ci-api-key 2>&1); then
+            case "$output" in
+              *ParameterNotFound*) echo "No CI API key parameter to delete." ;;
+              *) echo "$output"; exit 1 ;;
+            esac
+          fi

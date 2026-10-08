@@ -67,13 +67,16 @@ terraform apply          # state bucket, GitHub OIDC provider, CI roles, hosted 
 terraform output dtrack_zone_name_servers
 # If apply times out before the delegation propagates, simply run `terraform apply` again.
 
-# Hand the outputs to GitHub as repository VARIABLES (not secrets; none of these is sensitive)
-gh variable set AWS_REGION        --body eu-central-1
-gh variable set AWS_ACCOUNT_ID    --body <account-id>
-gh variable set TF_PLAN_ROLE_ARN  --body <output>
-gh variable set TF_APPLY_ROLE_ARN --body <output>
-gh variable set DTRACK_ROLE_ARN   --body <output>
-gh variable set TF_STATE_BUCKET   --body <output>
+# Hand the outputs to GitHub as repository VARIABLES (not secrets; none of these is sensitive).
+# Each AWS-dependent CI step switches itself on only when its variable exists.
+gh variable set AWS_REGION        --body eu-central-1     # optional: this is the default
+gh variable set TF_STATE_BUCKET   --body "$(terraform output -raw state_bucket)"
+gh variable set TF_PLAN_ROLE_ARN  --body "$(terraform output -raw tf_plan_role_arn)"
+gh variable set TF_APPLY_ROLE_ARN --body "$(terraform output -raw tf_apply_role_arn)"
+gh variable set DTRACK_ROLE_ARN   --body "$(terraform output -raw dtrack_role_arn)"
+
+# The only GitHub secret: the alarm email address, kept out of public logs and plan output
+gh secret set ALARM_EMAIL --body '<email>'
 ```
 
 The bootstrap stack is **never destroyed** during normal work.
@@ -106,7 +109,7 @@ gh variable set DTRACK_URL --body https://dtrack.<domain>   # turns on the Depen
 ```bash
 gh variable delete DTRACK_URL                                # CI stays green without the server
 gh workflow run infrastructure.yml -f action=destroy -f confirm=destroy-poc
-# then run the leftover check (§6)
+# The job also deletes /sssc/dtrack/ci-api-key. Then run the leftover check (§6).
 ```
 
 ## 3. First-run configuration

@@ -1,0 +1,56 @@
+# Dependency updates arrive as pull requests and pass the same gates as any other change.
+# The cooldown skips versions younger than a few days, the window in which hijacked releases are usually
+# found and pulled. Security updates ignore the cooldown.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /app
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "deps(app)"
+
+  # Base image digests in app/Dockerfile.
+  - package-ecosystem: docker
+    directory: /app
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 5
+    commit-message:
+      prefix: "deps(image)"
+
+  # Commit-SHA pins and their version comments in .github/workflows (ADR-017).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps(ci)"
+
+  # Provider versions and lock files of the two root stacks.
+  - package-ecosystem: terraform
+    directories:
+      - /infrastructure/bootstrap
+      - /infrastructure/environments/poc
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 5
+    commit-message:
+      prefix: "deps(infra)"
