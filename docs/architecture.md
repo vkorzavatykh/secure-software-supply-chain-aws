@@ -139,6 +139,12 @@ current AWS-recommended TLS security policy.
 
 Until the second apply sets `dtrack_public = true`, the ALB has no route to the instance (§5).
 
+Who owns which parameter matters for the barrier. Terraform creates `/sssc/dtrack/bootstrap-status` with
+the value `pending` and destroys it with the environment, so a `done` left over from an earlier session
+can never open the barrier early. Terraform does **not** manage `/sssc/dtrack/ci-api-key`. The instance
+writes it, because a Terraform-managed SecureString is copied into state on every refresh, and the plan
+role can read state (ADR-019, point 4). The destroy job deletes it ([runbook §6](runbook.md#6-teardown-and-leftover-check)).
+
 The compose file and scripts come from the repository (`deployment/`) through `templatefile`, so the
 running configuration is always traceable to a commit (ADR-009).
 

@@ -75,7 +75,7 @@ skipped for them.
 | Database application user `dtrack` | Instance bootstrap (random), once per environment | Secrets Manager `sssc/dtrack/db-app` | `sssc-ec2` (Dependency-Track's `.env`, mode 0600) | Git, Terraform state, logs |
 | Dependency-Track secret key (encrypts confidential settings in the database) | Dependency-Track, on first start | Secrets Manager `sssc/dtrack/secret-key`; restored to a 0600 file on later boots (ADR-021) | `sssc-ec2` | Git, Terraform state, logs, AMIs |
 | Dependency-Track admin password | Instance bootstrap (random) | Secrets Manager `sssc/dtrack/admin` (container created by Terraform, value written by the instance) | Owner, through console or CLI | Git, Terraform state |
-| Dependency-Track CI API key | Instance bootstrap | SSM SecureString `/sssc/dtrack/ci-api-key` | `sssc-gha-dtrack` (OIDC) | GitHub secrets, Git, logs (masked with `::add-mask::`) |
+| Dependency-Track CI API key | Instance bootstrap | SSM SecureString `/sssc/dtrack/ci-api-key` (written by the instance, not managed by Terraform) | `sssc-gha-dtrack` (OIDC) | GitHub secrets, Git, Terraform state, logs (masked with `::add-mask::`) |
 | NVD API key | Owner, once, by hand | SSM SecureString `/sssc/dtrack/nvd-api-key` (outside Terraform; referenced by name only) | `sssc-ec2` | Git, Terraform state |
 | AWS credentials for CI | **none exist** (OIDC) | — | — | — |
 | Terraform state | Terraform | S3: private, encrypted, versioned | Owner, CI roles | Git |
