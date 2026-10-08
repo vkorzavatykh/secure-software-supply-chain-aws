@@ -1,0 +1,82 @@
+# Application pipeline: test and build the demo API, then hand the image to the security workflow
+# (security §5). Third-party actions are pinned to full commit SHAs (ADR-017).
+name: ci
+
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - "security/**"
+      - ".grype.yaml"
+      - ".syft.yaml"
+      - ".nvmrc"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/security.yml"
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "security/**"
+      - ".grype.yaml"
+      - ".syft.yaml"
+      - ".nvmrc"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/security.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-build:
+    name: Test and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      # Exactly the locked tree; install scripts are disabled in app/.npmrc.
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - run: npm run build
+
+      # Built for scanning only, never pushed or deployed (ADR-018).
+      - name: Build the container image
+        env:
+          GIT_COMMIT: ${{ github.sha }}
+        run: |
+          docker build --build-arg GIT_COMMIT="$GIT_COMMIT" --tag sssc-demo-api:ci .
+          docker save sssc-demo-api:ci --output "$RUNNER_TEMP/image.tar"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: demo-api-image
+          path: ${{ runner.temp }}/image.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  security:
+    name: Security
+    needs: test-build
+    uses: ./.github/workflows/security.yml
+    with:
+      image-artifact: demo-api-image
+    permissions:
+      contents: read

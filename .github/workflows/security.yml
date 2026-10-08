@@ -1,0 +1,126 @@
+# SBOMs, vulnerability scan and security gate (security §5, ADR-006, ADR-013, ADR-014, ADR-023).
+#
+# The same CycloneDX file that Grype scans is the one uploaded to Dependency-Track, so both signals come
+# from one component inventory. The Dependency-Track job (upload, policy gate) is added after the local
+# Dependency-Track spike and runs only while the AWS environment is up (ADR-015).
+name: security
+
+on:
+  workflow_call:
+    inputs:
+      image-artifact:
+        description: Artifact with the image tarball built by ci.yml. Empty means build the image here.
+        type: string
+        default: ""
+  # Weekly on main: catches new CVEs in dependencies that were clean when they were merged.
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Same versions as local runs, so results match (runbook §0).
+  SYFT_VERSION: v1.54.1
+  GRYPE_VERSION: v0.120.1
+  IMAGE: sssc-demo-api:ci
+
+jobs:
+  sbom-scan:
+    name: SBOM and vulnerability scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: ${{ env.SYFT_VERSION }}
+
+      - name: Install Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: true
+
+      - name: Download the image built by ci.yml
+        if: inputs.image-artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.image-artifact }}
+          path: ${{ runner.temp }}/image
+
+      - name: Load or build the image
+        env:
+          IMAGE_ARTIFACT: ${{ inputs.image-artifact }}
+          GIT_COMMIT: ${{ github.sha }}
+        run: |
+          if [ -n "$IMAGE_ARTIFACT" ]; then
+            docker load --input "$RUNNER_TEMP/image/image.tar"
+          else
+            docker build --build-arg GIT_COMMIT="$GIT_COMMIT" --tag "$IMAGE" app
+          fi
+
+      # CycloneDX 1.6 until the pinned Dependency-Track version is confirmed to accept 1.7.
+      - name: Application SBOM
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          "$SYFT" scan dir:app --source-name sssc-demo-api --source-version "$GITHUB_SHA" \
+            --output cyclonedx-json@1.6=sbom.cdx.json
+
+      - name: "Application scan: gate (fails on Critical)"
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+        run: |
+          "$GRYPE" sbom:sbom.cdx.json --config .grype.yaml --fail-on critical \
+            --output json=grype-app.json --output table
+
+      - name: Image SBOM (OS packages included)
+        if: ${{ !cancelled() }}
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          "$SYFT" scan "docker:$IMAGE" --source-name sssc-demo-api-image --source-version "$GITHUB_SHA" \
+            --output cyclonedx-json@1.6=sbom-image.cdx.json
+
+      - name: "Image scan: report only"
+        if: ${{ !cancelled() }}
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+        run: |
+          "$GRYPE" sbom:sbom-image.cdx.json --config .grype.yaml \
+            --output json=grype-image.json --output table
+
+      - name: Job summary
+        if: ${{ !cancelled() }}
+        run: |
+          for report in "grype-app.json|Application dependencies|gating" \
+                        "grype-image.json|Container image|report-only"; do
+            IFS='|' read -r file title mode <<< "$report"
+            if [ -f "$file" ]; then
+              security/scripts/grype-summary.sh "$file" "$title" "$mode" >> "$GITHUB_STEP_SUMMARY"
+            else
+              printf '### %s\n\nNo report: the scan did not run.\n\n' "$title" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+      # Public by design for this demo app; for a real product SBOMs and scan reports are sensitive
+      # (security §2).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: sbom-and-scan-reports
+          path: |
+            sbom.cdx.json
+            sbom-image.cdx.json
+            grype-app.json
+            grype-image.json
+          retention-days: 30
+          if-no-files-found: warn

@@ -1,0 +1,12 @@
+# Grype configuration, shared by CI and local runs (ADR-013, ADR-014).
+# The gate itself is a command-line flag (--fail-on critical) on the application scan only, so the image
+# scan stays report-only (ADR-023).
+#
+# Exceptions need a written reason and go through a pull request (docs/security.md §6). Each entry gets a
+# comment with the CVE, the reason, the owner and a review date, for example:
+#
+#   - vulnerability: CVE-2026-00000
+#     package:
+#       name: example-package
+#     # Not reachable: the affected parser is never called. Owner: @vkorzavatykh. Review by 2026-12-31.
+ignore: []

@@ -1,0 +1,5 @@
+# Syft configuration, shared by CI and local runs.
+# Package inventory only: per-file records add noise, not risk information.
+file:
+  metadata:
+    selection: none
