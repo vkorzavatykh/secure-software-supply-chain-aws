@@ -50,4 +50,22 @@ tflint --init --config "$PWD/.tflint.hcl"
 tflint --recursive --config "$PWD/.tflint.hcl"
 ```
 
-The same checks run in the `infrastructure` workflow on every pull request.
+## Test locally (no AWS account needed)
+
+`terraform test` checks the security properties the docs promise, without touching AWS:
+
+| Suite | Provider | Checks |
+|-------|----------|--------|
+| `bootstrap/tests` | Real AWS provider, offline (fake credentials; every resource overridden) | Each CI role trusts only its own event; both Terraform roles explicitly deny secret values and the Dependency-Track keys; the plan role can't write state; the apply role's IAM rights reach only `sssc-ec2`; DNS changes are limited to the apex A record; the state bucket is private, encrypted, versioned and TLS-only |
+| `modules/network/tests` | Mocked | Subnet layout; no public IPs; only the app tier reaches the internet, through NAT; no rule opens port 22; tiers reference each other's Security Groups |
+| `modules/edge/tests` | Mocked | The startup barrier is closed unless `dtrack_public = true`; when open, `/api/*` reaches the API and everything else the UI; HTTP only redirects |
+| `modules/compute/tests` | Mocked | IMDSv2, no public IP, encrypted root volume, replacement on bootstrap change; role name matches the bootstrap scope; secrets with no recovery window; bootstrap status starts at `pending` |
+| `modules/database/tests` | Mocked | Not public, encrypted, TLS forced, RDS-managed password, destroyable without leftovers |
+
+```bash
+for dir in infrastructure/bootstrap infrastructure/modules/*; do
+  terraform -chdir="$dir" init -backend=false && terraform -chdir="$dir" test
+done
+```
+
+The same checks and tests run in the `infrastructure` workflow on every pull request.

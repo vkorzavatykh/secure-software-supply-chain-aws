@@ -53,6 +53,9 @@ resource "aws_subnet" "public" {
   availability_zone = each.key
   cidr_block        = cidrsubnet(var.vpc_cidr, 8, local.tier_offsets.public + each.value)
 
+  # The ALB and the NAT Gateway get their addresses explicitly; nothing here needs a public IP.
+  map_public_ip_on_launch = false
+
   tags = {
     Name = "${var.name_prefix}-public-${substr(each.key, -1, 1)}"
     Tier = "public"
@@ -66,6 +69,8 @@ resource "aws_subnet" "app" {
   availability_zone = each.key
   cidr_block        = cidrsubnet(var.vpc_cidr, 8, local.tier_offsets.app + each.value)
 
+  map_public_ip_on_launch = false
+
   tags = {
     Name = "${var.name_prefix}-app-${substr(each.key, -1, 1)}"
     Tier = "app"
@@ -78,6 +83,8 @@ resource "aws_subnet" "data" {
   vpc_id            = aws_vpc.this.id
   availability_zone = each.key
   cidr_block        = cidrsubnet(var.vpc_cidr, 8, local.tier_offsets.data + each.value)
+
+  map_public_ip_on_launch = false
 
   tags = {
     Name = "${var.name_prefix}-data-${substr(each.key, -1, 1)}"
