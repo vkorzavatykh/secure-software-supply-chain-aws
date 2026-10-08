@@ -1,0 +1,10 @@
+# Only package files, configs and src/ are needed in the build context.
+node_modules
+dist
+coverage
+tests
+*.md
+.env*
+*.cdx.json
+Dockerfile
+.dockerignore
