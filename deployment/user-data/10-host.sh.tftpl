@@ -1,0 +1,39 @@
+#!/bin/bash
+# Instance bootstrap, part 1: host preparation (architecture §6, steps 1-2).
+# Rendered by Terraform (templatefile) into gzip-compressed cloud-init user_data. Any change to it replaces
+# the instance (ADR-009). cloud-init runs the parts in file-name order; Dependency-Track itself is set up
+# by the parts that follow this one. Output goes to /var/log/cloud-init-output.log.
+set -euo pipefail
+
+echo "sssc-bootstrap: host preparation started"
+
+# 1. Security updates, Docker, and the Docker Compose plugin.
+dnf -y upgrade --security
+dnf -y install docker
+
+# Compose isn't packaged for Amazon Linux 2023: install the pinned release binary, verified by SHA-256.
+compose_url="https://github.com/docker/compose/releases/download/v${compose_version}/docker-compose-linux-x86_64"
+curl -fsSL --retry 5 --retry-connrefused -o /tmp/docker-compose "$compose_url"
+echo "${compose_sha256}  /tmp/docker-compose" | sha256sum --check --strict -
+install -D -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+rm -f /tmp/docker-compose
+
+# 2. Container logs go to CloudWatch Logs. Terraform owns the log group (7-day retention), so the driver
+#    must not create it.
+install -d -m 0755 /etc/docker
+cat > /etc/docker/daemon.json <<'JSON'
+{
+  "log-driver": "awslogs",
+  "log-opts": {
+    "awslogs-region": "${region}",
+    "awslogs-group": "${log_group}",
+    "awslogs-create-group": "false",
+    "tag": "{{.Name}}"
+  }
+}
+JSON
+
+systemctl enable --now docker
+docker compose version
+
+echo "sssc-bootstrap: host preparation finished"

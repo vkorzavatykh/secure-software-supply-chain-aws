@@ -6,9 +6,17 @@ and the decisions behind it are in [docs/decisions.md](../docs/decisions.md).
 ```text
 infrastructure/
 ├── bootstrap/          applied once from a workstation; never destroyed during normal work
+├── modules/
+│   ├── network/        VPC, subnets in two AZs, NAT Gateway, route tables, Security Groups
+│   ├── database/       RDS PostgreSQL, subnet group, parameter group (TLS forced)
+│   ├── compute/        EC2 instance, instance role, secret containers, bootstrap status, log group
+│   └── edge/           ALB, HTTPS listener with the startup barrier, target groups, alias record
 └── environments/
-    └── poc/            created and destroyed per work session, from CI
+    └── poc/            composes the modules, plus user_data and alarms; created and destroyed per session
 ```
+
+The instance bootstrap scripts live in [`deployment/user-data/`](../deployment/user-data/) and are rendered
+into gzip-compressed cloud-init user_data by `environments/poc/user-data.tf`.
 
 ## Stacks
 
@@ -34,8 +42,10 @@ The split exists because CI can't create the identity it authenticates with (ADR
 
 ```bash
 terraform fmt -check -recursive infrastructure
-terraform -chdir=infrastructure/bootstrap init -backend=false
-terraform -chdir=infrastructure/bootstrap validate
+for stack in bootstrap environments/poc; do
+  terraform -chdir="infrastructure/$stack" init -backend=false -lockfile=readonly
+  terraform -chdir="infrastructure/$stack" validate
+done
 tflint --init --config "$PWD/.tflint.hcl"
 tflint --recursive --config "$PWD/.tflint.hcl"
 ```

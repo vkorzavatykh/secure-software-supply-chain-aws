@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars (ignored by Git) to change a default for local runs.
+# In CI the workflow supplies everything; dtrack_public is set by the two-phase apply (ADR-020), so don't
+# set it here.
+
+# Narrow the load balancer to your own address, for example during the first session:
+# allowed_ingress_cidrs = ["203.0.113.10/32"]
+
+# SNS sends a confirmation email first. In CI this comes from the ALARM_EMAIL secret.
+# alarm_email = "you@example.com"
+
+# instance_type     = "t3.large"
+# db_instance_class = "db.t4g.micro"

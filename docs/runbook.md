@@ -58,7 +58,7 @@ export AWS_PROFILE=sssc
 aws ssm put-parameter --name /sssc/dtrack/nvd-api-key --type SecureString --value '<key>'
 
 cd infrastructure/bootstrap
-terraform init
+terraform init           # local state on purpose; keep a backup copy (infrastructure/README.md#state)
 terraform apply          # state bucket, GitHub OIDC provider, CI roles, hosted zone, ACM certificate
 
 # One-time DNS delegation (ADR-011): while apply waits for certificate validation,
@@ -92,6 +92,7 @@ gh workflow run infrastructure.yml -f action=apply     # then approve the "poc" 
 
 # Locally, the same two phases:
 #   cd infrastructure/environments/poc
+#   terraform init -backend-config="bucket=$(terraform -chdir=../../bootstrap output -raw state_bucket)"
 #   terraform apply -var dtrack_public=false
 #   aws ssm get-parameter --name /sssc/dtrack/bootstrap-status --query Parameter.Value --output text  # → done
 #   terraform apply -var dtrack_public=true
@@ -175,7 +176,8 @@ security/scripts/dtrack-upload-and-gate.sh --url https://dtrack.<domain> --sbom 
 After `destroy`, check that nothing billable remains:
 
 ```bash
-aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=sssc-poc \
+aws resourcegroupstaggingapi get-resources \
+  --tag-filters Key=Project,Values=sssc-poc Key=Environment,Values=poc \
   --query 'ResourceTagMappingList[].ResourceARN'
 ```
 
@@ -188,7 +190,8 @@ aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=sssc
 | RDS instances **and manual or final snapshots** | Snapshots aren't deleted with the instance |
 | EBS volumes | Orphaned if an instance was terminated outside Terraform |
 | Secrets Manager secrets "scheduled for deletion" | Blocks re-creating a secret with the same name next session. Terraform uses `recovery_window_in_days = 0` for the `sssc/dtrack/*` secrets (admin, db-app, secret-key) |
-| CloudWatch log groups | Only if created by the Docker log driver instead of Terraform (Terraform should own it) |
+| CloudWatch log groups | Only if created by the Docker log driver instead of Terraform. Terraform owns `/sssc/dependency-track`, and the driver runs with `awslogs-create-group=false` |
+| SSM parameter `/sssc/dtrack/ci-api-key` | Written by the instance and deliberately not managed by Terraform (architecture §6). The destroy job deletes it; by hand: `aws ssm delete-parameter --name /sssc/dtrack/ci-api-key` |
 
 Glance at Billing → Bills (current month) after the first two teardowns to confirm the cost really drops
 to near zero.
@@ -204,7 +207,8 @@ this order**:
    propagate. This must happen *before* step 3. A delegation that points to a deleted Route 53 zone is a
    known subdomain-takeover pattern, and here it would be on the company domain.
 3. Destroy the bootstrap stack: hosted zone, certificate, OIDC provider, CI roles, state bucket. Empty the
-   versioned state bucket first, or set `force_destroy` on it for this run.
+   versioned state bucket first, or apply once with `state_bucket_force_destroy = true` before
+   `terraform destroy`. The bootstrap state is local, so it isn't lost with the bucket.
 4. Delete the remaining repository variables (`gh variable list`). CI then runs only the static checks and
    the Grype gate, and stays green ([security §5](security.md#5-pipeline)).
 5. Close the AWS account, or keep it for the next project. Either way, step 2 must already be
