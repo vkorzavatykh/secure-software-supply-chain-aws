@@ -106,7 +106,7 @@ current AWS-recommended TLS security policy.
 | Setting | Value | Reason |
 |---------|-------|--------|
 | AMI | Amazon Linux 2023, latest, looked up by SSM public parameter | SSM agent preinstalled; no AMI ID hard-coded |
-| Type | `t3.large` (x86_64) | Dependency-Track's API server needs about 4.5 GiB RAM minimum; ARM (`t4g`) is a possible later saving once image support is confirmed |
+| Type | `t3.medium` (x86_64, 4 GiB) | The Dependency-Track v5 apiserver needs about 490 MiB with the vulnerability data loaded (ADR-024; v4 needed about 4.5 GiB). ARM (`t4g`) is a possible later saving once image support is confirmed |
 | Root volume | 30 GiB gp3, encrypted | Docker images and container logs |
 | IMDS | IMDSv2 **required**, hop limit 2 (containers use the role) | Blocks SSRF-style credential theft through IMDSv1 |
 | Instance profile | `AmazonSSMManagedInstanceCore` + scoped inline policy (see [security §3](security.md#3-identities-and-permissions)) | SSM access, secrets read, logs |
@@ -118,23 +118,24 @@ current AWS-recommended TLS security policy.
 ```text
 1. dnf update (security), install docker + compose plugin, enable docker
 2. Configure the Docker awslogs log driver → CloudWatch log group /sssc/dependency-track
-3. Secret key (ADR-021): if sssc/dtrack/secret-key has a value, restore it to
-   /opt/dtrack/keys/secret.key (0600); otherwise Dependency-Track generates it on first start (step 7)
-4. Database (ADR-022): read the RDS master secret at this moment; with a one-off `postgres` container,
-   create role + database `dtrack` if missing; generate the `dtrack` password once, store it in
-   sssc/dtrack/db-app (on later boots, read it from there)
-5. Render /opt/dtrack/.env (mode 0600: app DB user, ALPINE_SECRET_KEY_PATH) and
-   /opt/dtrack/docker-compose.yml (from Terraform templatefile)
+3. Key encryption key (ADR-021, ADR-024): if sssc/dtrack/secret-key has no value yet, generate one
+   (openssl rand -base64 32) and store it there BEFORE Dependency-Track ever starts; then restore it to
+   the secret file /opt/dtrack/secrets/kek
+4. Database (ADR-022): read the RDS master secret at this moment; run deployment/scripts/db-init.sh in a
+   one-off `postgres` container to create role + database `dtrack` if missing; generate the `dtrack`
+   password once, store it in sssc/dtrack/db-app (on later boots, read it from there), write it to
+   /opt/dtrack/secrets/db-password
+5. Render /opt/dtrack/docker-compose.yml (from Terraform templatefile); secrets reach the apiserver only
+   as mounted files through ${file::...}, never as environment values
 6. Install a systemd unit that runs `docker compose up` on boot
-7. Start Dependency-Track; poll the apiserver health endpoint on localhost until ready (with timeout)
-8. If the secret key was generated in step 7, store it in sssc/dtrack/secret-key
-9. First-run configuration against localhost (ADR-020), idempotent:
-     change the default admin password (new password → sssc/dtrack/admin),
-     create the CI team + API key → SSM /sssc/dtrack/ci-api-key,
-     apply the policies from security/policies/,
-     set the NVD API key (from SSM) as a Dependency-Track setting (stored encrypted with the secret key)
-10. Verify that a login with the default credentials is REJECTED, then signal completion
-    (log line + SSM parameter /sssc/dtrack/bootstrap-status = done)
+7. Start Dependency-Track; poll GET /api/version on localhost until ready (with timeout). Not :9000/health,
+   which reports UP even when a wrong key keeps the API from starting (ADR-024)
+8. First-run configuration against localhost (deployment/scripts/dtrack-first-run.sh, ADR-020),
+   idempotent: change the default admin password (new password → sssc/dtrack/admin), create the CI team +
+   API key → SSM /sssc/dtrack/ci-api-key, apply the policies from security/policies/, enable OSV for npm
+9. The same script verifies that a login with the default credentials is REJECTED (body
+   INVALID_CREDENTIALS, not just 401), then the bootstrap signals completion (log line + SSM parameter
+   /sssc/dtrack/bootstrap-status = done)
 ```
 
 Until the second apply sets `dtrack_public = true`, the ALB has no route to the instance (§5).
@@ -150,24 +151,18 @@ running configuration is always traceable to a commit (ADR-009).
 
 ### Dependency-Track configuration (key settings)
 
+Pinned and verified in the local spike ([spike/README.md](../spike/README.md), ADR-024).
+
 | Setting | Value |
 |---------|-------|
-| Images | `dependencytrack/apiserver:<pinned>`, `dependencytrack/frontend:<pinned>`. **Pin exact versions, ideally by digest** |
-| Database | external PostgreSQL. Set `ALPINE_DATABASE_MODE=external`, `ALPINE_DATABASE_URL=jdbc:postgresql://<rds-endpoint>:5432/dtrack`, `ALPINE_DATABASE_DRIVER=org.postgresql.Driver`, user `dtrack` with the password from `sssc/dtrack/db-app` (ADR-022) |
-| Secret key | `ALPINE_SECRET_KEY_PATH` → the key file mounted from `/opt/dtrack/keys` (restored from Secrets Manager; ADR-021) |
+| Images | `dependencytrack/apiserver:5.1.2` and `dependencytrack/frontend:5.1.2`, pinned by digest |
+| Database | `DT_DATASOURCE_URL=jdbc:postgresql://<rds-endpoint>:5432/dtrack?sslmode=require`, `DT_DATASOURCE_USERNAME=dtrack`, `DT_DATASOURCE_PASSWORD=${file::/run/secrets/db-password}` (ADR-022) |
+| Key encryption key | `DT_SECRET_MANAGEMENT_DATABASE_KEK=${file::/run/secrets/kek}` (restored from Secrets Manager; ADR-021, ADR-024) |
+| Telemetry | `DT_TELEMETRY_SUBMISSION_DEFAULT_ENABLED=false` (it only takes effect on the first start) |
+| Vulnerability data | NVD (public feed files, no API key) is on by default; first-run enables OSV for npm |
+| Ports | apiserver 8080 in the container (8081 on the host), frontend 8080; management and health on 9000, not exposed |
 | Frontend | `API_BASE_URL=https://dtrack.<domain>` |
-| Memory | Container memory limit set for the apiserver; check the JVM heap guidance for the pinned version |
-
-> Check the major version at kickoff. Confirm whether the current stable Dependency-Track major is still
-> the v4 API server + frontend pair or a newer architecture, and adjust this section before Phase 4.
->
-> **Kickoff check (2026-10-08).** Two lines are current: v4.14.5 and v5.1.2 (v5 has been GA since June
-> 2026). v4 is promised bug and security fixes for at least about six months after v5 GA. v5 keeps the
-> apiserver + frontend pair behind one origin with `/api` routing and supports only PostgreSQL, so the
-> network, load balancer and database design above holds for both. What differs is the configuration:
-> v5 uses `DT_DATASOURCE_*` instead of `ALPINE_DATABASE_*`, and its secret handling and API surface have
-> to be checked against ADR-021 and security §5. The local spike pins one of the two and records the
-> result here.
+| Memory | Container limit 2 GiB for the apiserver (it uses about 490 MiB with the data loaded) |
 
 ## 7. Data: RDS PostgreSQL
 
@@ -184,11 +179,13 @@ running configuration is always traceable to a commit (ADR-009).
 | Deletion | `deletion_protection = false`, `skip_final_snapshot` driven by a variable | The environment must be destroyable in one command |
 | Parameter group | `rds.force_ssl = 1` | Encrypted in transit; the JDBC URL uses `sslmode=require` |
 
-The EC2 instance holds **no essential state of its own** (ADR-021). Projects, findings and audit
-decisions live in RDS. The Dependency-Track secret key, which encrypts confidential settings in that
-database, lives in Secrets Manager. Everything else in the data directory (vulnerability mirrors, search
-indexes, JWT keys, logs) is a disposable cache. Replacing the instance (new AMI, changed bootstrap) loses
-nothing, and showing that, including an encrypted setting that still works, is part of the demo (P4-05).
+The EC2 instance holds **no essential state of its own** (ADR-021, ADR-024). Projects, findings, audit
+decisions and the vulnerability data live in RDS. The key encryption key, which protects the secrets
+Dependency-Track keeps in that database, lives in Secrets Manager. Nothing in the data directory is
+essential: v5 keeps sessions in the database and uses the directory only for temporary files. Replacing
+the instance (new AMI, changed bootstrap) loses nothing, and showing that, including a stored secret that
+still decrypts, is part of the demo (P4-05). The local spike has already shown it with a deleted container
+and data volume ([spike/README.md](../spike/README.md#p2-09-the-claims-of-adr-020-to-adr-022)).
 
 ## 8. Logging and monitoring (MVP)
 

@@ -56,7 +56,7 @@ Repository: `vkorzavatykh/secure-software-supply-chain-aws`. All roles use `aud 
 | `sssc-gha-tf-plan` | `repo:vkorzavatykh/secure-software-supply-chain-aws:pull_request` | Read infrastructure (start from `ReadOnlyAccess`, then narrow); read and write **only** the state object and its `.tflock` in the state bucket |
 | `sssc-gha-tf-apply` | `repo:vkorzavatykh/secure-software-supply-chain-aws:environment:poc` | Manage the services in use (EC2, ELB, RDS, SSM, Logs, CloudWatch, SNS, Secrets Manager metadata); ACM read only; Route 53 record changes only in the project's hosted zone. IAM limited to `sssc-*` roles and instance profiles, and `iam:PassRole` only for `sssc-ec2` |
 | `sssc-gha-dtrack` | `repo:vkorzavatykh/secure-software-supply-chain-aws:pull_request`, `repo:vkorzavatykh/secure-software-supply-chain-aws:ref:refs/heads/main` | `ssm:GetParameter` on `/sssc/dtrack/ci-api-key` only; `kms:Decrypt` through SSM only |
-| `sssc-ec2` (instance) | `ec2.amazonaws.com` | `AmazonSSMManagedInstanceCore`; read the RDS master secret; read and write `sssc/dtrack/admin`, `sssc/dtrack/db-app` and `sssc/dtrack/secret-key`; read `/sssc/dtrack/nvd-api-key`; write `/sssc/dtrack/ci-api-key` and `/sssc/dtrack/bootstrap-status`; write to its log group |
+| `sssc-ec2` (instance) | `ec2.amazonaws.com` | `AmazonSSMManagedInstanceCore`; read the RDS master secret; read and write `sssc/dtrack/admin`, `sssc/dtrack/db-app` and `sssc/dtrack/secret-key`; write `/sssc/dtrack/ci-api-key` and `/sssc/dtrack/bootstrap-status`; write to its log group |
 | Dependency-Track `ci` team | API key | BOM upload, project creation on upload, view portfolio, vulnerabilities and policy violations. Check the permission names against the pinned version |
 
 **Least-privilege note.** The apply role is the hardest to narrow. Phase 3 starts with service-level
@@ -73,10 +73,9 @@ skipped for them.
 |--------|------------|-----------|---------|------------------|
 | RDS master password (rotated every 7 days by default) | RDS (`manage_master_user_password`) | Secrets Manager (RDS-managed) | `sssc-ec2`, **bootstrap only** (ADR-022) | Git, Terraform state, logs |
 | Database application user `dtrack` | Instance bootstrap (random), once per environment | Secrets Manager `sssc/dtrack/db-app` | `sssc-ec2` (Dependency-Track's `.env`, mode 0600) | Git, Terraform state, logs |
-| Dependency-Track secret key (encrypts confidential settings in the database) | Dependency-Track, on first start | Secrets Manager `sssc/dtrack/secret-key`; restored to a 0600 file on later boots (ADR-021) | `sssc-ec2` | Git, Terraform state, logs, AMIs |
+| Dependency-Track key encryption key (protects the secrets Dependency-Track stores in the database) | Instance bootstrap (random), once per environment, before the first start (ADR-024) | Secrets Manager `sssc/dtrack/secret-key`; restored on every boot to a file mounted into the apiserver (ADR-021) | `sssc-ec2` | Git, Terraform state, logs, AMIs, container environment |
 | Dependency-Track admin password | Instance bootstrap (random) | Secrets Manager `sssc/dtrack/admin` (container created by Terraform, value written by the instance) | Owner, through console or CLI | Git, Terraform state |
 | Dependency-Track CI API key | Instance bootstrap | SSM SecureString `/sssc/dtrack/ci-api-key` (written by the instance, not managed by Terraform) | `sssc-gha-dtrack` (OIDC) | GitHub secrets, Git, Terraform state, logs (masked with `::add-mask::`) |
-| NVD API key | Owner, once, by hand | SSM SecureString `/sssc/dtrack/nvd-api-key` (outside Terraform; referenced by name only) | `sssc-ec2` | Git, Terraform state |
 | AWS credentials for CI | **none exist** (OIDC) | — | — | — |
 | Terraform state | Terraform | S3: private, encrypted, versioned | Owner, CI roles | Git |
 
@@ -139,14 +138,14 @@ The **same file** that Grype scans is the one uploaded to Dependency-Track (ADR-
 Script: `security/scripts/dtrack-upload-and-gate.sh` (bash + curl + jq), runnable locally with the same
 arguments, which helps debugging and the demo.
 
-**Check against the pinned Dependency-Track version before Phase 5:**
+**Checked against Dependency-Track 5.1.2 in the local spike** ([spike/README.md](../spike/README.md), ADR-024):
 
-- Endpoints in use: BOM upload, event-token status, project lookup, policy violations per project,
-  findings per project.
-- Whether "processing finished" for the token covers vulnerability analysis **and** policy evaluation,
-  or only BOM ingestion. If only ingestion, add a bounded wait or poll for analysis results before
-  reading violations.
-- Project metrics are computed asynchronously. Gate on **violations**, not on metric counters.
+- The endpoints are those of v4: `POST /api/v1/bom`, `GET /api/v1/event/token/{token}`,
+  `GET /api/v1/project/lookup`, `GET /api/v1/violation/project/{uuid}`, `GET /api/v1/finding/project/{uuid}`.
+- The token tracks import, vulnerability analysis **and** policy evaluation. The script waits for status
+  `COMPLETED` (not just `processing: false`, which a failed import also reports) and then reads violations.
+- Lists return 100 items by default; the script reads every page.
+- Project metrics are computed asynchronously. The gate reads **violations**, not metric counters.
 
 ### `infrastructure.yml`
 
@@ -213,7 +212,7 @@ Keep a `demo/vulnerable-dependency` tag pointing at commit 1 so the scenario can
 | Unreviewed infrastructure change | Branch protection on `main`; manual approval on environment `poc` |
 | Subdomain takeover on the company domain (`dtrack.frontward-solutions.com`) | The alias record is destroyed with each environment. At the end of the project, the NS delegation is removed at the parent domain **before** the hosted zone or account is deleted ([runbook §6](runbook.md#end-of-project-final-teardown)) |
 | Default Dependency-Track admin credentials exposed | ALB has no forward rules until bootstrap has replaced the default password **and verified** that the default login fails (ADR-020). Health checks are not relied on: an ALB routes after one passing check and fails open |
-| Instance replacement makes encrypted settings unreadable | Dependency-Track secret key kept in Secrets Manager and restored before start (ADR-021) |
+| Instance replacement makes encrypted settings unreadable | Key encryption key kept in Secrets Manager and restored before every start (ADR-021, ADR-024). With a wrong key, v5 refuses to serve instead of corrupting data |
 | Master password rotation breaks database connections | Dependency-Track uses its own `dtrack` user; the master user is for bootstrap only (ADR-022) |
 | Brute force against the public Dependency-Track login | Long random admin password; HTTPS only; optional CIDR restriction. WAF and SSO are production improvements |
 | Credential theft from the instance (SSRF) | IMDSv2 required |
