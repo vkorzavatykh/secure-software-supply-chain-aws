@@ -5,6 +5,8 @@ import { pinoHttp } from "pino-http";
 import type { AppConfig } from "./config.js";
 import { errorHandler, notFoundHandler } from "./errors.js";
 import { healthRouter } from "./routes/health.js";
+import { productsRouter } from "./routes/products.js";
+import { versionRouter } from "./routes/version.js";
 
 export interface AppDependencies {
   config: AppConfig;
@@ -12,7 +14,7 @@ export interface AppDependencies {
 }
 
 /** Builds the Express app without listening, so tests can drive it in-process. */
-export function createApp({ logger }: AppDependencies): Express {
+export function createApp({ config, logger }: AppDependencies): Express {
   const app = express();
 
   app.use(helmet());
@@ -29,6 +31,7 @@ export function createApp({ logger }: AppDependencies): Express {
   );
 
   app.use(healthRouter());
+  app.use("/api", versionRouter(config), productsRouter());
 
   app.use(notFoundHandler);
   app.use(errorHandler);
