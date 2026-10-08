@@ -5,6 +5,10 @@
 > as one repeatable system. It is not client work, and it is not a highly available production deployment.
 > See [Disclaimer](#disclaimer).
 
+[![ci](https://github.com/vkorzavatykh/secure-software-supply-chain-aws/actions/workflows/ci.yml/badge.svg)](https://github.com/vkorzavatykh/secure-software-supply-chain-aws/actions/workflows/ci.yml)
+[![infrastructure](https://github.com/vkorzavatykh/secure-software-supply-chain-aws/actions/workflows/infrastructure.yml/badge.svg)](https://github.com/vkorzavatykh/secure-software-supply-chain-aws/actions/workflows/infrastructure.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 ## Overview
 
 Terraform provisions a small AWS environment that runs [OWASP Dependency-Track](https://dependencytrack.org/)
@@ -158,7 +162,13 @@ Critical image findings is the documented next step
 |----------|---------|------|
 | `ci.yml` | PR, push to `main` (application and security paths) | Test and build, then calls `security.yml` |
 | `security.yml` | Called by `ci.yml`; weekly schedule on `main` | SBOMs, Grype gate, Dependency-Track upload and policy gate |
-| `infrastructure.yml` | PR, push to `main` (infrastructure paths); manual `apply` / `destroy` | `fmt`, `validate`, `tflint`, `plan`; two-phase apply after approval |
+| `infrastructure.yml` | PR, push to `main` (infrastructure paths); manual `apply` / `destroy` | `fmt`, `validate`, offline `terraform test`, `tflint`, `plan`; two-phase apply after approval |
+
+Tests run on every change without an AWS account: unit and HTTP tests for the API (Vitest, coverage
+thresholds), and `terraform test` suites that check the security properties above, from the CI roles' trust
+policies to the startup barrier ([infrastructure/README.md](infrastructure/README.md#test-locally-no-aws-account-needed)).
+Every AWS-dependent step switches itself off when its repository variable is missing, so CI stays green
+while the environment is torn down.
 
 Every workflow starts from `permissions: contents: read`. Only jobs that assume an AWS role get
 `id-token: write`. Third-party actions are pinned to a full commit SHA, and Dependabot keeps those pins,
@@ -216,14 +226,17 @@ important ones:
 
 ```text
 .
-├── app/                         demo API: source, tests, Dockerfile
+├── app/                         demo API: src/, tests/, multi-stage Dockerfile
 ├── infrastructure/
 │   ├── bootstrap/               one-time stack: state bucket, OIDC, CI roles, DNS zone, certificate
-│   ├── modules/                 network, database, compute, edge
-│   └── environments/poc/        the per-session environment
-├── deployment/                  instance bootstrap and Docker Compose files
-├── security/                    Dependency-Track policies and pipeline scripts
-├── .github/workflows/           ci, security, infrastructure
+│   ├── modules/                 network, database, compute, edge (each with offline tests)
+│   └── environments/poc/        the per-session environment: modules, user_data, alarms
+├── deployment/user-data/        instance bootstrap scripts, rendered into cloud-init
+├── security/scripts/            pipeline scripts (scan summary; Dependency-Track upload and gate next)
+├── .github/
+│   ├── workflows/               ci, security, infrastructure
+│   └── dependabot.yml           npm, base images, action pins, Terraform providers
+├── .grype.yaml, .syft.yaml      scanner configuration shared by CI and local runs
 └── docs/                        architecture, decisions, security model, runbook
 ```
 
@@ -265,11 +278,11 @@ What a production version would add, deliberately left out of this proof of conc
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 1 | Architecture and decisions | Done |
-| 2 | Repository skeleton; local Dependency-Track spike | In progress |
-| 3 | AWS infrastructure in Terraform | Not started |
-| 4 | Dependency-Track automation on the instance | Not started |
-| 5 | Demo API and security pipeline | Not started |
-| 6 | Security gate demo (fail → fix → pass) | Not started |
+| 2 | Repository skeleton; local Dependency-Track spike | Skeleton done; spike next (it also picks Dependency-Track v4.14 or v5, see [architecture §6](docs/architecture.md#6-compute-the-ec2-instance)) |
+| 3 | AWS infrastructure in Terraform | Written, validated and tested offline; not yet applied to AWS |
+| 4 | Dependency-Track automation on the instance | Host preparation done (Docker, Compose, logging); Dependency-Track steps follow the spike |
+| 5 | Demo API and security pipeline | API, tests, SBOMs and the Grype gate done; Dependency-Track upload and policy gate follow the spike |
+| 6 | Security gate demo (fail → fix → pass) | Grype side verified locally; the demo pull request comes with Phase 5 |
 | 7 | Evidence, diagram and final documentation | Not started |
 
 ## About the Author

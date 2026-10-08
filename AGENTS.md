@@ -27,3 +27,26 @@ Rules for anyone changing this repository, including AI coding agents.
 - Small pull requests, one change each, with the issue in the title.
 - Never run `terraform apply` or `terraform destroy` against AWS without the owner's explicit go-ahead in
   the current session.
+
+## Checks before every commit
+
+Run the same checks as CI. None of them needs an AWS account.
+
+```bash
+# Demo API (Node.js version from .nvmrc)
+cd app && npm ci && npm run lint && npm run typecheck && npm run test:coverage && npm run build
+
+# Terraform: format, validate, offline tests, lint
+terraform fmt -check -recursive infrastructure
+for dir in infrastructure/bootstrap infrastructure/environments/poc; do
+  terraform -chdir="$dir" init -backend=false -lockfile=readonly && terraform -chdir="$dir" validate
+done
+for dir in infrastructure/bootstrap infrastructure/modules/*; do
+  terraform -chdir="$dir" init -backend=false && terraform -chdir="$dir" test
+done
+tflint --init --config "$PWD/.tflint.hcl" && tflint --recursive --config "$PWD/.tflint.hcl"
+
+# SBOM and gate, with the Syft and Grype versions pinned in .github/workflows/security.yml
+syft scan dir:app -o cyclonedx-json@1.6=sbom.cdx.json
+grype sbom:sbom.cdx.json --config .grype.yaml --fail-on critical
+```
