@@ -43,12 +43,6 @@ data "aws_iam_policy_document" "instance" {
   }
 
   statement {
-    sid       = "ReadNvdApiKey"
-    actions   = ["ssm:GetParameter"]
-    resources = [local.nvd_api_key_arn]
-  }
-
-  statement {
     sid       = "WriteBootstrapOutputs"
     actions   = ["ssm:GetParameter", "ssm:PutParameter"]
     resources = [aws_ssm_parameter.bootstrap_status.arn, local.ci_api_key_arn]

@@ -15,9 +15,9 @@ variable "security_group_id" {
 }
 
 variable "instance_type" {
-  description = "Instance type. The Dependency-Track v4 apiserver needs about 4.5 GiB of RAM."
+  description = "Instance type. The Dependency-Track v5 apiserver uses about 490 MiB with its data loaded (ADR-024)."
   type        = string
-  default     = "t3.large"
+  default     = "t3.medium"
 }
 
 variable "root_volume_size" {
@@ -61,7 +61,7 @@ variable "dtrack_secret_prefix" {
 }
 
 variable "dtrack_parameter_path" {
-  description = "SSM Parameter Store path of the Dependency-Track parameters (nvd-api-key, ci-api-key, bootstrap-status)."
+  description = "SSM Parameter Store path of the Dependency-Track parameters (ci-api-key, bootstrap-status)."
   type        = string
   default     = "/sssc/dtrack"
 }

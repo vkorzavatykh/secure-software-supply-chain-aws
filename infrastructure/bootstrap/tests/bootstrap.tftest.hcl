@@ -188,10 +188,9 @@ run "terraform_roles_can_never_read_secret_values" {
         for statement in jsondecode(document).Statement : statement
         if statement.Effect == "Deny" && contains(flatten([statement.Action]), "ssm:GetParameter")
         && contains(flatten([statement.Resource]), "arn:aws:ssm:eu-central-1:111111111111:parameter/sssc/dtrack/ci-api-key")
-        && contains(flatten([statement.Resource]), "arn:aws:ssm:eu-central-1:111111111111:parameter/sssc/dtrack/nvd-api-key")
       ]) == 1
     ])
-    error_message = "Both Terraform roles must explicitly deny reading the Dependency-Track CI and NVD keys (ADR-019, point 4)."
+    error_message = "Both Terraform roles must explicitly deny reading the Dependency-Track CI API key (ADR-019, point 4)."
   }
 
   assert {
